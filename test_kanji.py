@@ -51,7 +51,31 @@ def main():
     charset_io()
     show_original()
     font_preview()
+    chargen_search_is_quick()
     chargen_lookup()
+    print("OK")
+
+
+def chargen_search_is_quick():
+    """A full search must not walk every application bundle.
+
+    An unbounded '**' over /Applications took minutes on a machine with no
+    cached path - long enough to stall a CI runner - while finding nothing
+    the bounded patterns miss.
+    """
+    import glob, time
+    import kanji as K
+
+    for pattern in K.CHARGEN_QUICK + K.CHARGEN_SLOW:
+        head = pattern.split("**")[0]
+        assert "**" not in pattern or head.count("/") > 2, \
+            f"unbounded recursive glob: {pattern}"
+
+    start = time.time()
+    for pattern in K.CHARGEN_QUICK + K.CHARGEN_SLOW:
+        glob.glob(pattern, recursive=True)
+    elapsed = time.time() - start
+    assert elapsed < 10, f"chargen search took {elapsed:.1f}s"
     print("OK")
 
 
@@ -65,11 +89,11 @@ def chargen_lookup():
         assert not K.valid_chargen("/existiert/nicht")
 
         found = K.find_chargen()
-        if found:                                   # nur wo VICE installiert ist
-            assert K.read_config().get("chargen") == found, "Pfad wird gemerkt"
-            assert K.find_chargen() == found, "gemerkter Pfad wird genutzt"
-            K.write_config({"chargen": "/weg/damit"})
-            assert K.find_chargen() == found, "ungueltiger Eintrag -> neu suchen"
+        if found:                                   # only where VICE is installed
+            assert K.read_config().get("chargen") == found, "path is remembered"
+            assert K.find_chargen() == found, "the remembered path is used"
+            K.write_config({"chargen": "/gone"})
+            assert K.find_chargen() == found, "stale entry -> search again"
 
         # no hit: an empty charset rather than a crash
         K.CHARGEN_QUICK, K.CHARGEN_SLOW = ["/nirgends/chargen"], []

@@ -48,9 +48,13 @@ _EMUS = ("VICE*", "WinVICE*", "GTK3VICE*", "SDL*VICE*", "Vice*",
 def _chargen_globs():
     """Search patterns, cheap and precise ones first.
 
-    Split in two passes: the exact paths cost milliseconds, while a
-    recursive '**' over /Applications or C:/ takes seconds. The slow ones
-    only run if the quick pass found nothing.
+    Split in two passes: the exact paths cost milliseconds, the wider ones
+    a fraction of a second. The slow ones only run if the quick pass found
+    nothing.
+
+    No pattern may use an unbounded '**' over a directory full of
+    application bundles - that walk does not finish in reasonable time.
+    Every wide pattern spells out its depth instead.
     """
     quick = [os.path.join(APP_DIR, "chargen"),
              os.path.join(APP_DIR, "roms", "chargen")]
@@ -64,10 +68,11 @@ def _chargen_globs():
             "/usr/local/share/vice/C64/chargen",
             os.path.expanduser("~/Library/Application Support/RetroArch/system/**/chargen"),
         ]
-        slow += [
-            "/Applications/**/C64/chargen",
-            os.path.expanduser("~/Applications/**/C64/chargen"),
-        ]
+        # bounded depth, never '**': a recursive walk of /Applications
+        # descends into every app bundle and takes minutes, not seconds
+        for apps in ("/Applications", os.path.expanduser("~/Applications")):
+            for depth in range(1, 5):
+                slow.append(f"{apps}/{'*/' * depth}C64/chargen")
     elif os.name == "nt":
         for root in _windows_roots():
             for app in _EMUS:
