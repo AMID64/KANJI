@@ -1,0 +1,18 @@
+[project]
+name = "kanji"
+version = "1.0"
+description = "Cross-development character set editor for the Commodore 64"
+authors = [{ name = "drees / amid" }]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = [
+    "flet==0.86.1",
+    "pillow>=10",
+]
+
+[tool.flet]
+product = "KANJI"
+company = "AMID64"
+copyright = "DREES/AMID 2026"
+org = "de.amid64"

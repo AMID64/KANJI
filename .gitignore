@@ -1,0 +1,14 @@
+# local settings (chargen ROM path differs per machine)
+kanji.json
+
+# design notes, not shipped
+SPEC.md
+
+# build output
+build/
+dist/
+*.spec
+KANJI-*.zip
+
+__pycache__/
+*.pyc

@@ -1,0 +1,131 @@
+name: release
+
+# Builds KANJI with `flet build`, which compiles a native Flutter app - no
+# Python and no Flet installation needed to run it. Flutter is only required
+# here on the runner, never by the user.
+#
+# This repo is private, so the releases are visible to org members only.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            out: build/windows
+            asset: KANJI-windows.zip
+          - os: macos-latest
+            target: macos
+            out: build/macos
+            asset: KANJI-macos.zip
+          - os: ubuntu-latest
+            target: linux
+            out: build/linux
+            asset: KANJI-linux.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The tag is the single source of truth for the version. Fail here
+      # rather than shipping a build whose About dialog disagrees with it.
+      - name: Check the version matches the tag
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          code=$(sed -n 's/^VERSION = "v\{0,1\}\(.*\)"/\1/p' kanji.py)
+          proj=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          echo "tag=$tag  kanji.py=$code  pyproject.toml=$proj"
+          for v in "$code" "$proj"; do
+            if [ "${v%.0}" != "${tag%.0}" ]; then
+              echo "::error::version mismatch - tag is $tag, found $v"
+              exit 1
+            fi
+          done
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev libmpv-dev mpv
+
+      - name: Use a UTF-8 console (Windows)
+        if: runner.os == 'Windows'
+        run: chcp 65001
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: python test_kanji.py
+
+      # PYTHONIOENCODING: flet prints spinner glyphs that the Windows console
+      # codepage cannot encode, which kills the build with a UnicodeEncodeError
+      - name: Build
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
+        run: flet build ${{ matrix.target }} --module-name kanji --no-rich-output
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path ${{ matrix.out }}/* -DestinationPath ${{ matrix.asset }}
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent ${{ matrix.out }}/KANJI.app ${{ matrix.asset }}
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: cd ${{ matrix.out }} && zip -r ../../${{ matrix.asset }} .
+
+      # handed to the publish job - three parallel jobs creating the same
+      # release race each other, so only one job publishes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*.zip
+          fail_on_unmatched_files: true
+          body: |
+            Cross-development C64 character set editor.
+
+            Download the archive for your system, unpack it and run it —
+            nothing else to install. A C64 chargen ROM is required, see the
+            README.

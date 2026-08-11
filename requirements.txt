@@ -1,0 +1,6 @@
+flet==0.86.1
+pillow>=10
+
+# only needed to build a standalone app with `flet build`
+flet-cli==0.86.1
+flet-desktop==0.86.1
