@@ -32,11 +32,28 @@ installation needed. You still need a chargen ROM (see below).
 | System | Archive | Start |
 |--------|---------|-------|
 | Windows | `KANJI-windows.zip` | unpack, run `KANJI.exe` |
-| macOS | `KANJI-macos.zip` | unpack, open `KANJI.app` |
+| macOS | `KANJI-macos.zip` | unpack, see below |
 | Linux | `KANJI-linux.zip` | unpack, run `./KANJI` |
 
-On macOS the app is unsigned — the first start needs *right click → Open* to
-get past Gatekeeper.
+### Starting it on macOS
+
+The app carries an ad-hoc signature, not one from a paid Apple Developer
+account. macOS quarantines anything downloaded through a browser, and
+Gatekeeper refuses to launch a quarantined app it cannot trace to a
+registered developer. Double-clicking gives you *"kanji" is damaged and
+can't be opened* — the file is fine, the message is Gatekeeper's.
+
+Move `kanji.app` where you want it, then clear the quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/kanji.app
+```
+
+After that it starts by double-click like any other app. Repeat this after
+downloading a new version — the flag comes back with every download.
+
+*Right click → Open* used to be enough, but recent macOS versions no longer
+offer that escape hatch for ad-hoc signed apps.
 
 ### From source
 
