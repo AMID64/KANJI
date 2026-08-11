@@ -293,8 +293,13 @@ def load_cbm(path=None):
 
 
 def strip_load_addr(data):
-    """.64c files may carry a 2-byte load address."""
-    return data[2:] if len(data) in (2050, 4098) else data
+    """.64c files may carry a 2-byte load address.
+
+    Partial fonts are common - a scene charset often holds just the 64
+    characters it needs - so the size is not fixed to a full charset. Two
+    bytes on top of a multiple of 8 is the load address.
+    """
+    return data[2:] if len(data) % 8 == 2 else data
 
 
 def row_hflip(row):
@@ -311,6 +316,16 @@ def row_shift(row, step):
     bits = "".join(f"{b:08b}" for b in row)
     bits = ("0" * step + bits[:-step]) if step > 0 else (bits[-step:] + "0" * -step)
     return [int(bits[i:i + 8], 2) for i in range(0, len(bits), 8)]
+
+
+def fit_tile(rows, w, h):
+    """Crop or pad a copied tile so it fits a tile of w bytes by h*8 rows.
+
+    Copying a 2x2 and pasting into a 1x1 keeps the top left corner; the
+    other way round the missing part stays empty.
+    """
+    out = [list(r[:w]) + [0] * max(0, w - len(r)) for r in rows[:h * 8]]
+    return out + [[0] * w for _ in range(h * 8 - len(out))]
 
 
 class Kanji:
@@ -479,7 +494,6 @@ class Kanji:
     def refresh(self):
         w, h = TILES[self.tile]
         px, py = w * 8, h * 8          # editable pixel extent of the tile
-        rows = self.get()
 
         # Rebuild the grid on every refresh: Flet does not reliably send
         # property mutations on deeply nested controls.
@@ -721,10 +735,9 @@ class Kanji:
         elif k == "S":
             self.page.run_task(self.do_save)
         elif k == "C":
-            self.clip = bytes(self.get())
+            self.clip = self.tile_rows()
         elif k == "V" and self.clip:
-            self.snapshot()
-            self.put(self.clip)
+            self.edit(lambda t: fit_tile(self.clip, len(t[0]), len(t)))
         elif k == "P":
             self.font_prev = not self.font_prev
             if self.font_prev:                  # preview only shows 0-63
@@ -747,9 +760,9 @@ class Kanji:
         elif k == "6":
             self.edit(lambda t: [row_shift(r, 1) for r in t])
         elif k == "7":
-            self.edit(lambda t: t[1:] + t[:1])
+            self.edit(lambda t: t[1:] + [[0] * len(t[0])])
         elif k == "8":
-            self.edit(lambda t: t[-1:] + t[:-1])
+            self.edit(lambda t: [[0] * len(t[0])] + t[:-1])
         elif k == "9":
             self.edit(lambda t: [[b ^ 0xFF for b in r] for r in t])
         elif k == "0":
@@ -901,19 +914,73 @@ class Kanji:
         self.refresh()          # rebuild editor and charset preview
         self.note(f"loaded: {os.path.basename(path)} ({len(data)} B, {what})")
 
+    async def ask_charsets(self):
+        """Which charsets to save. Both are ticked by default.
+
+        Returns (lower, upper) or None if the dialog was cancelled. Save is
+        blocked while neither is ticked - there would be nothing to write.
+        """
+        choice = asyncio.get_running_loop().create_future()
+
+        def answer(ok):
+            if not choice.done():
+                choice.set_result(ok)
+
+        lower = ft.Checkbox(label="Charset 1 - uppercase", value=True)
+        upper = ft.Checkbox(label="Charset 2 - lowercase", value=True)
+        save = ft.TextButton("Save", on_click=lambda e: answer(True))
+
+        def tick(e):
+            save.disabled = not (lower.value or upper.value)
+            self.page.update()
+
+        lower.on_change = upper.on_change = tick
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Save charsets"),
+            content=ft.Column([
+                ft.Text("Both charsets go into one 4096-byte file, a single "
+                        "one into 2048 bytes.", font_family="monospace", size=12),
+                ft.Container(height=8),
+                lower, upper,
+            ], tight=True),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda e: answer(False)),
+                save,
+            ],
+        )
+        self.page.show_dialog(dlg)
+        ok = await choice
+        self.page.pop_dialog()
+        return (lower.value, upper.value) if ok else None
+
     async def do_save(self):
-        """Save the active charset as a 2048-byte raw dump (.64c/.bin)."""
-        path = await self.picker.save_file("Save Charset", file_name="font.64c",
+        """Save the picked charsets as a raw dump (.64c/.bin)."""
+        picked = await self.ask_charsets()
+        if picked is None:
+            return
+        lower, upper = picked
+
+        # no extension in the suggested name: the macOS dialog appends the
+        # allowed one itself, which turned "font.64c" into "font.64c.64c"
+        path = await self.picker.save_file("Save Charset", file_name="font",
                                            allowed_extensions=list(EXTS))
         if not path:
             return
         if not path.lower().endswith(tuple("." + e for e in EXTS)):
             path += ".64c"
-        base = (self.cur // 256) * 256 * 8
+
+        if lower and upper:
+            data, what = self.font[:4096], "both charsets"
+        elif lower:
+            data, what = self.font[:2048], "charset 1"
+        else:
+            data, what = self.font[2048:4096], "charset 2"
         with open(path, "wb") as f:
-            f.write(self.font[base:base + 2048])
-        self.note(f"saved: {os.path.basename(path)} (2048 B, "
-                  f"charset {self.cur // 256 + 1})")
+            f.write(data)
+        self.note(f"saved: {os.path.basename(path)} "
+                  f"({len(data)} B, {what})")
 
     def note(self, msg):
         """Show a message in the status line."""

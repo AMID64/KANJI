@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Self-check for kanji's pure logic. Run: python3 test_kanji.py"""
 
+import asyncio
 import os
 import tempfile
 import types
@@ -16,8 +17,8 @@ hflip = lambda r: [int(f"{b:08b}"[::-1], 2) for b in r]
 vflip = lambda r: r[::-1]
 shl = lambda r: [(b << 1) & 0xFF for b in r]
 shr = lambda r: [b >> 1 for b in r]
-up = lambda r: r[1:] + r[:1]
-down = lambda r: r[-1:] + r[:-1]
+up = lambda r: r[1:] + [0]        # like shl/shr, the row that leaves is lost
+down = lambda r: [0] + r[:-1]
 inv = lambda r: [b ^ 0xFF for b in r]
 swap = lambda r: [((b >> 4) | (b << 4)) & 0xFF for b in r]
 
@@ -31,18 +32,21 @@ def main():
         assert cbm == bytearray(4096), "without a ROM the charset must be empty"
         print("note: no chargen ROM found - ROM-dependent checks skipped")
 
-    # load address stripping
-    assert strip_load_addr(bytearray(b"\x00\x30" + b"x" * 2048)) == bytearray(b"x" * 2048)
-    assert strip_load_addr(bytearray(b"x" * 2048)) == bytearray(b"x" * 2048)
+    # load address stripping, also for partial fonts - a scene charset often
+    # carries just the 64 characters it needs, not a full 2048-byte set
+    for size in (2048, 4096, 512, 8):
+        assert len(strip_load_addr(bytearray(b"\x00\x30" + b"x" * size))) == size
+        assert len(strip_load_addr(bytearray(b"x" * size))) == size
 
     # every transform is its own inverse or has a known inverse
     for f in (hflip, vflip, inv, swap):
         assert f(f(A)) == A, f
-    assert up(down(A)) == A
-    assert down(up(A)) == A
     assert hflip([0b10000000]) == [0b00000001]
+    # all four shifts drop what leaves the edge - nothing wraps around
     assert shl([0b10000001]) == [0b00000010]   # top bit falls off
     assert shr([0b10000001]) == [0b01000000]   # low bit falls off
+    assert up([1, 2, 3]) == [2, 3, 0]          # first row falls off
+    assert down([1, 2, 3]) == [0, 1, 2]        # last row falls off
     assert swap([0b11110000]) == [0b00001111]
     assert inv([0]) == [255]
 
@@ -87,7 +91,7 @@ def chargen_lookup():
     K.CONFIG = os.path.join(tempfile.mkdtemp(), "cfg.json")
     try:
         assert not K.valid_chargen(None)
-        assert not K.valid_chargen("/existiert/nicht")
+        assert not K.valid_chargen("/does/not/exist")
 
         found = K.find_chargen()
         if found:                                   # only where VICE is installed
@@ -97,7 +101,7 @@ def chargen_lookup():
             assert K.find_chargen() == found, "stale entry -> search again"
 
         # no hit: an empty charset rather than a crash
-        K.CHARGEN_QUICK, K.CHARGEN_SLOW = ["/nirgends/chargen"], []
+        K.CHARGEN_QUICK, K.CHARGEN_SLOW = ["/nowhere/chargen"], []
         K.CONFIG = os.path.join(tempfile.mkdtemp(), "cfg2.json")
         assert K.find_chargen() is None
         assert K.load_cbm(None) == bytearray(4096)
@@ -105,24 +109,24 @@ def chargen_lookup():
         # a 2 KB charset is valid and gets padded to 4096
         half = os.path.join(tempfile.mkdtemp(), "half.64c")
         with open(half, "wb") as f:
-            f.write(bytes(A) * 256)                 # genau 2048 Bytes
-        assert K.valid_chargen(half), "2048 Bytes muessen reichen"
+            f.write(bytes(A) * 256)                 # exactly 2048 bytes
+        assert K.valid_chargen(half), "2048 bytes must be enough"
         d = K.load_cbm(half)
-        assert len(d) == 4096, "immer auf 4096 aufgefuellt"
+        assert len(d) == 4096, "always padded to 4096"
         assert list(d[0:8]) == A and d[2048:] == bytearray(2048)
 
         # the load address is stripped when loading a charset too
         withaddr = os.path.join(tempfile.mkdtemp(), "addr.64c")
         with open(withaddr, "wb") as f:
             f.write(b"\x00\x38" + bytes(A) * 256)
-        assert list(K.load_cbm(withaddr)[0:8]) == A, "Ladeadresse entfernt"
+        assert list(K.load_cbm(withaddr)[0:8]) == A, "load address stripped"
 
         # OpenROM download: None on a network error rather than a crash
         real_dir, real_url = K.APP_DIR, K.OPENROM_URL
         try:
             K.APP_DIR = tempfile.mkdtemp()
             K.OPENROM_URL = "https://example.invalid/nichts.rom"
-            assert K.Kanji.download_openrom() is None, "Netzfehler -> None"
+            assert K.Kanji.download_openrom() is None, "a network error gives None"
         finally:
             K.APP_DIR, K.OPENROM_URL = real_dir, real_url
     finally:
@@ -136,9 +140,9 @@ def font_preview():
 
     assert not k.font_prev
     k.on_key(ev("P"))
-    assert k.font_prev, "P schaltet die Font-Preview ein"
+    assert k.font_prev, "P turns the font preview on"
     k.on_key(ev("P"))
-    assert not k.font_prev, "nochmal P schaltet zurueck"
+    assert not k.font_prev, "P again turns it back off"
 
     # navigation stays within base characters 0-63 in the preview
     k.font_prev = True
@@ -146,63 +150,114 @@ def font_preview():
     k.tile = 0
     k.cur = 63
     k.on_key(ev("Arrow Right"))
-    assert k.cur == 0, f"nach 63 folgt wieder 0, war {k.cur}"
+    assert k.cur == 0, f"63 wraps to 0, got {k.cur}"
     k.cur = 0
     k.on_key(ev("Arrow Left"))
-    assert k.cur == 63, f"vor 0 liegt 63, war {k.cur}"
+    assert k.cur == 63, f"0 wraps back to 63, got {k.cur}"
     k.cur = 0
     k.on_key(ev("Arrow Down"))
-    assert k.cur < 64, f"runter bleibt unter 64, war {k.cur}"
+    assert k.cur < 64, f"down stays below 64, got {k.cur}"
 
     # toggling brings a character >=64 into view
     k.font_prev = False
     k.cur = 200
     k.on_key(ev("P"))
-    assert k.cur < 64, f"P begrenzt auf 0-63, war {k.cur}"
+    assert k.cur < 64, f"P clamps to 0-63, got {k.cur}"
 
     # a click in the tile view hits the right base character
     k.font_prev = True
-    k.tile = 3                                   # 2x2 -> Tile ist 17 px breit
+    k.tile = 3                                   # 2x2 -> the tile is 17 px wide
     picked = []
     k.select = lambda c: picked.append(c)
     tw = 2 * 8 + 1
     k.preview_click(tap_at((1 + tw * 3) * PREV_SCALE, 1 * PREV_SCALE))
-    assert picked == [3], f"4. Tile der 1. Zeile = Zeichen 3, war {picked}"
+    assert picked == [3], f"4th tile of row 1 is char 3, got {picked}"
 
     # a click in the charset view: 2nd character of the 1st row
     k.font_prev = False
     k.cur = 0
     picked.clear()
     k.preview_click(tap_at((1 + 9) * PREV_SCALE, 1 * PREV_SCALE))
-    assert picked == [1], f"2. Zeichen der 1. Zeile, war {picked}"
+    assert picked == [1], f"2nd char of row 1, got {picked}"
 
 
 def show_original():
     """Holding ß shows the CBM original, releasing shows the edit again."""
     k = headless()
     k.cur = 1
-    k.put([0] * 8)                               # Zeichen leeren
+    k.put([0] * 8)                               # clear the character
     assert list(k.shown()) == [0] * 8
 
     ev = lambda key: types.SimpleNamespace(key=key, shift=False)
-    k.on_key(ev("ß"))                            # gedrueckt
+    k.on_key(ev("ß"))                            # held down
     assert k.show_orig
-    assert list(k.shown()) == A, "zeigt das CBM-Original"
-    assert list(k.get()) == [0] * 8, "Arbeitsdaten bleiben unveraendert"
+    assert list(k.shown()) == A, "shows the CBM original"
+    assert list(k.get()) == [0] * 8, "the working data stays untouched"
 
-    k.on_key_up(ev("ß"))                         # losgelassen
+    k.on_key_up(ev("ß"))                         # released
     assert not k.show_orig
-    assert list(k.shown()) == [0] * 8, "zeigt wieder die Bearbeitung"
+    assert list(k.shown()) == [0] * 8, "shows the edit again"
+
+
+async def _open_and_close(coro):
+    """Run a dialog coroutine far enough to build it, then cancel it.
+
+    sleep(0) is not enough here - the coroutine only gets to show_dialog
+    once the loop actually yields.
+    """
+    task = asyncio.ensure_future(coro)
+    await asyncio.sleep(0.05)
+    task.cancel()
 
 
 def charset_io():
     """Load and save operate on 2048-byte charsets (README)."""
     k = headless()
 
-    # save: the active charset only, 2048 bytes
-    k.cur = 1
-    assert len(k.font[0:2048]) == 2048
-    k.cur = 300                                  # zweiter Zeichensatz
+    # save writes exactly the ticked charsets, through the real do_save
+    k.font[:2048] = bytes([0x11]) * 2048
+    k.font[2048:4096] = bytes([0x22]) * 2048
+    out = tempfile.mkdtemp()
+
+    def saved(picked, name):
+        path = os.path.join(out, name)
+        k.ask_charsets = lambda: asyncio.sleep(0, result=picked)
+        k.picker = types.SimpleNamespace(
+            save_file=lambda *a, **kw: asyncio.sleep(0, result=path))
+        k.note = lambda msg: None
+        asyncio.run(k.do_save())
+        return open(path, "rb").read() if os.path.exists(path) else None
+
+    both = saved((True, True), "both.64c")
+    assert len(both) == 4096 and both[0] == 0x11 and both[2048] == 0x22
+    one = saved((True, False), "one.64c")
+    assert len(one) == 2048 and set(one) == {0x11}, "charset 1 only"
+    two = saved((False, True), "two.64c")
+    assert len(two) == 2048 and set(two) == {0x22}, "charset 2 only"
+    assert saved(None, "cancel.64c") is None, "cancelling writes nothing"
+
+    # both boxes start ticked, and saving nothing must not be possible
+    held = {}
+    k.page = types.SimpleNamespace(
+        update=lambda: None, pop_dialog=lambda: None,
+        show_dialog=lambda d: held.setdefault("dlg", d))
+    del k.ask_charsets                       # the stub above shadowed the real one
+    asyncio.run(_open_and_close(k.ask_charsets()))
+
+    dlg = held["dlg"]
+    one, two = dlg.content.controls[2], dlg.content.controls[3]
+    save = dlg.actions[1]
+    assert one.value and two.value, "both charsets ticked by default"
+    assert not save.disabled
+    one.value = two.value = False
+    one.on_change(None)
+    assert save.disabled, "no tick means nothing to save"
+    two.value = True
+    two.on_change(None)
+    assert not save.disabled
+
+    k.font[:] = bytearray(4096)
+    k.cur = 300                                  # second charset
     base = (k.cur // 256) * 256 * 8
     assert base == 2048
 
@@ -211,8 +266,8 @@ def charset_io():
     data = bytearray(range(256)) * 8             # 2048 Bytes Testmuster
     n = min(len(data), 2048)
     k.font[base:base + n] = data[:n]
-    assert k.font[2048:2048 + 8] == data[:8], "in Charset 2 geladen"
-    assert k.font[0:8] == bytearray(8), "Charset 1 bleibt unberuehrt"
+    assert k.font[2048:2048 + 8] == data[:8], "loaded into charset 2"
+    assert k.font[0:8] == bytearray(8), "charset 1 stays untouched"
 
     # 4096 bytes replace both sets
     both = bytearray(range(256)) * 16
@@ -297,6 +352,46 @@ def tile_edits():
     k.put([0b10000001] * 8)
     k.on_key(ev("5"))
     assert list(k.get()) == [0b00000010] * 8, list(k.get())
+
+    # all four shifts drop what leaves the tile - none of them wrap around
+    for key, char, row, other in (("7", 0, 0, 2), ("8", 2, 7, 0)):
+        k = headless()
+        k.tile, k.cur = 3, 1
+        chars = k.tile_chars()
+        for i in chars:
+            k.put([0] * 8, i)
+        rows = [0] * 8
+        rows[row] = 0xFF
+        k.put(rows, chars[char])
+        k.on_key(ev(key))
+        assert not any(k.get(chars[other])), f"{key} must not wrap around"
+
+    # copy and paste carry the whole tile, not just one char
+    k = headless()
+    k.tile, k.cur = 3, 1
+    for n, i in enumerate(k.tile_chars()):
+        k.put([n + 1] * 8, i)
+    k.on_key(ev("C"))
+    k.cur = 2
+    target = k.tile_chars()
+    for i in target:
+        k.put([0] * 8, i)
+    k.on_key(ev("V"))
+    assert [k.get(i)[0] for i in target] == [1, 2, 3, 4], "paste fills the tile"
+    k.on_key(ev("1"))
+    assert all(not any(k.get(i)) for i in target), "one undo takes it back"
+
+    # pasting between tile sizes crops or pads instead of failing
+    k.tile, k.cur = 0, 5
+    k.on_key(ev("V"))
+    assert list(k.get()) == [1] * 8, "2x2 into 1x1 keeps the top left char"
+    k.on_key(ev("C"))
+    k.tile, k.cur = 3, 9
+    for i in k.tile_chars():
+        k.put([0] * 8, i)
+    k.on_key(ev("V"))
+    assert [k.get(i)[0] for i in k.tile_chars()] == [1, 0, 0, 0], \
+        "1x1 into 2x2 leaves the rest empty"
     print("OK")
 
 
