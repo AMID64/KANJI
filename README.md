@@ -1,6 +1,8 @@
-<img src="assets/kanji-logo.png" alt="KANJI" width="420">
+<p align="center">
+  <img src="assets/kanji-logo.png" alt="KANJI" width="420">
+</p>
 
-A cross-development character set editor for the Commodore 64.
+<p align="center">A cross-development character set editor for the Commodore 64.</p>
 
 KANJI edits C64 fonts on a modern desktop: draw a character pixel by pixel,
 see the whole charset update live, and preview how your font looks as
