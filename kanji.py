@@ -139,6 +139,8 @@ TITLEBAR = 28                           # macOS window title bar
 
 EDITOR_W = 17 * (PIX + 1) + 140         # 16 pixel columns + ruler + tile preview
 TOP_H = 17 * (PIX + 1) + PANE_HEAD      # 16 pixel rows + ruler + title
+KEYS_PANE_H = TOP_H - PANE_HEAD         # usable height inside the key pane
+KEYS_NUDGE = 4                          # optical centring, see keys()
 STATUS_H = 26
 
 
@@ -154,6 +156,22 @@ RULER = "0123456789ABCDEFGH"
 TITLE = "KANJI"
 VERSION = "v1.0"
 BYLINE = "by DREES/AMID"
+
+COPYRIGHT = "DREES/AMID in 2026"   # shown in the app; the bundle metadata
+                                   # in pyproject.toml stays terse
+HOMEPAGE = "https://amid64.de/"
+
+
+def credit_line(size=12):
+    """The copyright with the homepage as a clickable link."""
+    return ft.Text(spans=[
+        ft.TextSpan(f"{COPYRIGHT} - "),
+        ft.TextSpan(HOMEPAGE, url=HOMEPAGE),
+    ], color=SEL, size=size, font_family="monospace")
+
+LOGO = "kanji-logo.png"   # resolved against assets/, both from source and bundled
+LOGO_W = 190              # in the key panel
+SPLASH_W = 520            # on the start screen
 
 # (key, function) - rendered in two columns, all formatted the same
 HELP_LEFT = [
@@ -380,19 +398,25 @@ class Kanji:
 
         return ft.Container(
             ft.Column([
-                ft.Row([
-                    ft.Text(TITLE, color=SEL, size=20, weight=ft.FontWeight.BOLD,
-                            font_family="monospace"),
-                    ft.Text(VERSION, color=FG, size=12, font_family="monospace"),
-                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END),
-                ft.Text(BYLINE, color=FG, size=12, font_family="monospace"),
-                ft.Container(height=8),
+                # logo over its subline, centred - same arrangement as the splash
+                ft.Image(src=LOGO, width=LOGO_W, fit=ft.BoxFit.CONTAIN),
+                ft.Text(f"crossdev c64 font editor {VERSION}",
+                        color=FG, size=12, font_family="monospace"),
+                credit_line(),
+                ft.Container(height=10),
                 ft.Row([column(HELP_LEFT), column(HELP_RIGHT)], spacing=16,
                        vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Container(height=8),
                 column(HELP_BOTTOM),
-            ], spacing=2),
-            padding=ft.Padding.only(left=10))      # keep the content off the border
+            ], spacing=2,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+                # the pane wraps this in a scrolling Column, which does not
+                # stretch - claim the height here so centring has room to work
+                height=KEYS_PANE_H - KEYS_NUDGE * 2),
+            # this pane carries no heading, but pane() still reserves the room
+            # for one, which pushes the optical centre up
+            padding=ft.Padding.only(left=10, top=KEYS_NUDGE * 2))
 
     def pane(self, title, content, expand=True):
         inner = ft.Column([content], spacing=0, expand=expand,
@@ -838,11 +862,41 @@ class Kanji:
         self.page.update()
 
 
+async def splash(page: ft.Page, seconds=1.6):
+    """Show the logo and the credits while the window settles.
+
+    Runs to completion before the editor is built, so it can never overlap
+    the 'no character ROM' dialog that Kanji raises on start.
+    """
+    screen = ft.Container(
+        ft.Column([
+            ft.Image(src=LOGO, width=SPLASH_W, fit=ft.BoxFit.CONTAIN),
+            ft.Container(height=18),
+            ft.Text(f"crossdev c64 font editor {VERSION}", color=FG, size=13,
+                    font_family="monospace"),
+            credit_line(),
+        ], spacing=4,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER),
+        bgcolor=BG, expand=True, alignment=ft.Alignment.CENTER)
+
+    # the window only becomes visible once the first frame is up, so the
+    # visible part of the wait starts here, not at process start
+    page.add(screen)
+    page.update()
+    await asyncio.sleep(0.4)
+    await page.window.center()
+    await asyncio.sleep(seconds)
+    page.controls.clear()
+    page.update()
+
+
 async def main(page: ft.Page):
     page.title = (f"{TITLE} {VERSION} - crossdev c64 font editor"
                   f" - {BYLINE.removeprefix('by ')}")
     page.bgcolor = "#000000"
     page.padding = PAGE_PAD
+    await splash(page)
     Kanji(page)
     # set the size after building, otherwise Flet keeps its default geometry
     page.window.width = WIN_W

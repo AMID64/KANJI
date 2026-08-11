@@ -1,4 +1,4 @@
-# KANJI
+<img src="assets/kanji-logo.png" alt="KANJI" width="420">
 
 A cross-development character set editor for the Commodore 64.
 
@@ -90,6 +90,8 @@ is stored in `kanji.json` next to `kanji.py` and reused on every later start.
 
 If nothing is found, KANJI asks you to select the file. **Without a valid ROM
 the app will not start** — cancelling the dialog quits it.
+
+![No character ROM found](docs/screenshot-rom.png)
 
 To use a different ROM later, delete `kanji.json` or edit the path inside it.
 You can also drop a file named `chargen` next to `kanji.py`.
