@@ -47,6 +47,7 @@ def main():
     assert inv([0]) == [255]
 
     tiles()
+    tile_edits()
     keys()
     charset_io()
     show_original()
@@ -245,7 +246,7 @@ def tiles():
 
     # the pixel comes from the respective character
     k.font[65 * 8] = 0b10000000
-    assert k.tile_pixel(8, 0), "rechts oben liest SHIFT A"
+    assert k.tile_pixel(8, 0), "top right reads SHIFT A"
     k.put([0] * 8, 1)
     assert not k.tile_pixel(0, 0)
 
@@ -253,12 +254,50 @@ def tiles():
     k.cur = 1
     k.put([0] * 8, 129)
     k.toggle(0, 8)                              # links unten -> REVERSE A (129)
-    assert k.font[129 * 8] & 0x80, "toggle muss in REVERSE A schreiben"
-    assert not k.font[1 * 8] & 0x80, "Basiszeichen bleibt unveraendert"
+    assert k.font[129 * 8] & 0x80, "toggle must write into REVERSE A"
+    assert not k.font[1 * 8] & 0x80, "the base character stays untouched"
 
     # second charset: the tile stays inside it
     k.cur = 257
     assert k.tile_char(1, 1) == 257 + 192
+
+
+def tile_edits():
+    """An edit covers the whole tile, and one undo takes all of it back.
+
+    Clear used to wipe only the char under the cursor, leaving the other
+    three of a 2x2 tile untouched.
+    """
+    ev = lambda key: types.SimpleNamespace(key=key, shift=False)
+    k = headless()
+    k.tile, k.cur = 3, 1                        # 2x2 on 'A'
+    chars = k.tile_chars()
+    assert chars == [1, 65, 129, 193], chars
+
+    for i in chars:
+        k.put([0xFF] * 8, i)
+    k.on_key(ev("Backspace"))
+    assert all(not any(k.get(i)) for i in chars), "clear must wipe every char"
+    k.on_key(ev("1"))
+    assert all(all(k.get(i)) for i in chars), "one undo must restore the tile"
+
+    # a flip crosses the char boundary: top left pixel ends up in the neighbour
+    for i in chars:
+        k.put([0] * 8, i)
+    k.put([0b10000000] + [0] * 7, chars[0])
+    k.on_key(ev("3"))                           # horizontal flip
+    assert not any(k.get(chars[0])) and k.get(chars[1])[0] == 1, "hflip"
+    k.on_key(ev("1"))
+    k.on_key(ev("4"))                           # vertical flip
+    assert not any(k.get(chars[0])) and k.get(chars[2])[7] == 0x80, "vflip"
+
+    # a single char behaves exactly as before: the bit falls off the edge
+    k = headless()
+    k.tile, k.cur = 0, 1
+    k.put([0b10000001] * 8)
+    k.on_key(ev("5"))
+    assert list(k.get()) == [0b00000010] * 8, list(k.get())
+    print("OK")
 
 
 def tap_at(x, y):

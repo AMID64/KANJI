@@ -297,6 +297,22 @@ def strip_load_addr(data):
     return data[2:] if len(data) in (2050, 4098) else data
 
 
+def row_hflip(row):
+    """Mirror one tile row. Wider than a char, so the bytes swap places too."""
+    return [int(f"{b:08b}"[::-1], 2) for b in reversed(row)]
+
+
+def row_shift(row, step):
+    """Shift one tile row by a pixel, dropping the bit that falls off the edge.
+
+    step -1 shifts left, +1 right. Across a tile the bits move between the
+    chars, so only the outermost pixel of the whole row is lost.
+    """
+    bits = "".join(f"{b:08b}" for b in row)
+    bits = ("0" * step + bits[:-step]) if step > 0 else (bits[-step:] + "0" * -step)
+    return [int(bits[i:i + 8], 2) for i in range(0, len(bits), 8)]
+
+
 class Kanji:
     def __init__(self, page: ft.Page):
         self.page = page
@@ -334,9 +350,22 @@ class Kanji:
         i = (self.cur if idx is None else idx) * 8
         self.font[i:i + 8] = bytes(rows)
 
-    def snapshot(self, idx=None):
-        idx = self.cur if idx is None else idx
-        self.undo.append((idx, bytes(self.get(idx))))
+    def tile_chars(self):
+        """Every char index the current tile is built from, in reading order."""
+        w, h = TILES[self.tile]
+        return [self.tile_char(tx, ty) for ty in range(h) for tx in range(w)]
+
+    def snapshot(self, idxs=None):
+        """Remember the chars an edit is about to change, as one undo step.
+
+        Takes a single char index or a list of them - a tile-wide edit is
+        one step, so one undo takes all of it back.
+        """
+        if idxs is None:
+            idxs = [self.cur]
+        elif isinstance(idxs, int):
+            idxs = [idxs]
+        self.undo.append([(i, bytes(self.get(i))) for i in idxs])
         del self.undo[:-100]
         self.redo.clear()
 
@@ -626,9 +655,37 @@ class Kanji:
         self.refresh()
 
     # --- edits -------------------------------------------------------
+    def tile_rows(self):
+        """The tile as one bitmap: h*8 rows of w bytes, left to right."""
+        w, h = TILES[self.tile]
+        chars = [[self.get(self.tile_char(tx, ty)) for tx in range(w)]
+                 for ty in range(h)]
+        return [[chars[y // 8][tx][y % 8] for tx in range(w)]
+                for y in range(h * 8)]
+
+    def cbm_tile_rows(self):
+        """The tile bitmap as it looks in the untouched CBM charset."""
+        w, h = TILES[self.tile]
+        return [[self.cbm[self.tile_char(tx, ty) * 8 + y % 8] for tx in range(w)]
+                for ty in range(h) for y in range(8)]
+
+    def put_tile_rows(self, rows):
+        """Write a tile bitmap back into the chars it is made of."""
+        w, h = TILES[self.tile]
+        for ty in range(h):
+            for tx in range(w):
+                self.put([rows[ty * 8 + y][tx] for y in range(8)],
+                         self.tile_char(tx, ty))
+
     def edit(self, fn):
-        self.snapshot()
-        self.put(fn(list(self.get())))
+        """Apply fn to the whole tile, not just the char under the cursor.
+
+        fn works on a single char (8 rows of one byte). For a tile it is
+        applied to the tile bitmap instead, so a flip or a shift crosses
+        the char boundaries the way the tile is drawn on screen.
+        """
+        self.snapshot(self.tile_chars())
+        self.put_tile_rows(fn(self.tile_rows()))
         self.refresh()
 
     def on_key_down(self, e):
@@ -682,23 +739,23 @@ class Kanji:
         elif k == "2":
             self.pop(self.redo, self.undo)
         elif k == "3":
-            self.edit(lambda r: [int(f"{b:08b}"[::-1], 2) for b in r])
+            self.edit(lambda t: [row_hflip(r) for r in t])
         elif k == "4":
-            self.edit(lambda r: r[::-1])
+            self.edit(lambda t: t[::-1])
         elif k == "5":
-            self.edit(lambda r: [(b << 1) & 0xFF for b in r])
+            self.edit(lambda t: [row_shift(r, -1) for r in t])
         elif k == "6":
-            self.edit(lambda r: [b >> 1 for b in r])
+            self.edit(lambda t: [row_shift(r, 1) for r in t])
         elif k == "7":
-            self.edit(lambda r: r[1:] + r[:1])
+            self.edit(lambda t: t[1:] + t[:1])
         elif k == "8":
-            self.edit(lambda r: r[-1:] + r[:-1])
+            self.edit(lambda t: t[-1:] + t[:-1])
         elif k == "9":
-            self.edit(lambda r: [b ^ 0xFF for b in r])
+            self.edit(lambda t: [[b ^ 0xFF for b in r] for r in t])
         elif k == "0":
-            self.edit(lambda r: list(self.cbm[self.cur * 8:self.cur * 8 + 8]))
+            self.edit(lambda t: self.cbm_tile_rows())
         elif k == "Backspace":
-            self.edit(lambda r: [0] * 8)
+            self.edit(lambda t: [[0] * len(t[0]) for _ in t])
         elif k == "ß":
             if self.show_orig:              # ignore auto-repeat
                 return
@@ -725,12 +782,14 @@ class Kanji:
             self.cur = base + (self.cur - base + d[0] + d[1] * per_row) % span
 
     def pop(self, src, dst):
+        """Undo or redo one step - a step may span several chars of a tile."""
         if not src:
             return
-        idx, rows = src.pop()
-        dst.append((idx, bytes(self.get(idx))))
-        self.cur = idx
-        self.put(rows, idx)
+        step = src.pop()
+        dst.append([(i, bytes(self.get(i))) for i, _ in step])
+        for idx, rows in step:
+            self.put(rows, idx)
+        self.cur = step[0][0]
 
     # --- io ----------------------------------------------------------
     async def ask_chargen(self):
