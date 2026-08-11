@@ -70,6 +70,10 @@ pip install -r requirements.txt
 flet build macos --module-name kanji     # or: windows / linux
 ```
 
+The app icon is `assets/icon.png`, a 1024x1024 square with no transparency.
+One file covers every platform; `flet build` derives the `.icns` and `.ico`
+variants from it.
+
 Pushing a `v*` tag builds all three platforms via GitHub Actions and attaches
 the archives to the release. Each target has to be built on its own platform —
 there is no cross-compilation.
