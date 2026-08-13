@@ -4,7 +4,7 @@ name: release
 # Python and no Flet installation needed to run it. Flutter is only required
 # here on the runner, never by the user.
 #
-# This repo is private, so the releases are visible to org members only.
+# The releases are public, one archive per platform.
 
 on:
   push:
