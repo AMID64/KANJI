@@ -1,8 +1,15 @@
 # local settings (chargen ROM path differs per machine)
 kanji.json
 
-# design notes, not shipped
+# design notes and helper scripts, not shipped
 SPEC.md
+featurelist.txt
+tools/
+
+# example build output (KickAssembler and VICE leave these behind)
+*.prg
+.source.txt
+*-vice.log
 
 # build output
 build/

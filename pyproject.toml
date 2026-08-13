@@ -1,6 +1,6 @@
 [project]
 name = "kanji"
-version = "1.0"
+version = "1.40"
 description = "Cross-development character set editor for the Commodore 64"
 authors = [{ name = "drees / amid" }]
 license = "MIT"

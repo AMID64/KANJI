@@ -1,0 +1,21 @@
+10 rem ---------------------------------------------------
+20 rem kanji 1x2 font viewer
+30 rem n over n+128 (reverse), 16 per row
+40 rem charset expected at $3000 (load it there first)
+50 rem for the lowercase set use  or 14  instead of  or 12
+60 rem ---------------------------------------------------
+100 poke 53280,0 : poke 53281,0 : rem black border and background
+110 print chr$(147);
+120 poke 53272,(peek(53272)and240)or12 : rem chars at $3000
+130 c=1 : rem white
+200 for r=0 to 3
+210 : for x=0 to 15
+220 :   n=r*16+x : b=1024+r*120+x*2
+230 :   poke b,n     : poke 55296+b-1024,c
+240 :   poke b+40,n+128 : poke 55296+b-1024+40,c
+250 : next x
+260 next r
+900 get k$:if k$="" then 900
+910 poke 53272,21 : rem back to the rom charset
+920 poke 53280,14 : poke 53281,6 : rem the usual blue back
+930 end
