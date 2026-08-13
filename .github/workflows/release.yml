@@ -58,9 +58,23 @@ jobs:
             fi
           done
 
+      # Flet insists on one specific Flutter version and rejects anything
+      # else. Tracking `channel: stable` worked until Flutter moved on, after
+      # which every build died on "Flutter SDK not found or invalid version
+      # installed" - so ask flet which version it wants rather than pinning a
+      # number here that would drift the next time flet is upgraded.
+      - name: Ask flet which Flutter it needs
+        id: flutter_version
+        shell: bash
+        run: |
+          pip install --quiet "$(grep -m1 '^flet==' requirements.txt)"
+          v=$(python -c "import flet.version; print(flet.version.flutter_version)")
+          echo "flet needs Flutter $v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: ${{ steps.flutter_version.outputs.version }}
           cache: true
 
       - name: Linux build dependencies
@@ -87,7 +101,9 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
           PYTHONUTF8: '1'
-        run: flet build ${{ matrix.target }} --module-name kanji --no-rich-output
+        # --yes: without it flet asks before installing anything it is missing,
+        # and a prompt on a runner ends the build with an EOFError
+        run: flet build ${{ matrix.target }} --module-name kanji --no-rich-output --yes
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
